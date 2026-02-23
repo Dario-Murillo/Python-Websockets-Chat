@@ -35,20 +35,34 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, client_id: int)
     await manager.connect(websocket, room_id)
     try:
         while True:
-            data = await websocket.receive_text()
+            rawData = await websocket.receive_text()
+            data = json.loads(rawData)
+            
+            if data.get("type") == "join":
+                await manager.broadcast(json.dumps({
+                    "type": "join",
+                    "username": data.get("username"),
+                    "room_id": room_id,
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }), room_id)
+                continue
+
             await manager.send_personal_message(f"You wrote: {data}", websocket)
             await manager.broadcast(json.dumps({
+                "type": "message",
                 "client_id": client_id,
+                "username": data.get("username"),
+                "message": data.get("message"),
                 "room_id": room_id,
-                "message": data,
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }), room_id)
+            
+            
     except WebSocketDisconnect:
         manager.disconnect(websocket, room_id)
         await manager.broadcast(json.dumps({
-            "client_id": client_id,
-            "room_id": room_id,
-            "message": "left the chat",
             "event": "disconnect",
+            "username": "unknown",  # temporary until auth is added
+            "room_id": room_id,
             "timestamp": datetime.now(timezone.utc).isoformat()
         }), room_id)
