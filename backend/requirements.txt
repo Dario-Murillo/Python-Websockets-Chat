@@ -1,2 +1,8 @@
 fastapi[standard]
 aiofiles
+sqlalchemy[asyncio] 
+asyncpg 
+alembic 
+passlib[bcrypt] 
+python-jose[cryptography] 
+python-dotenv
