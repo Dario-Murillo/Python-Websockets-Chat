@@ -1,233 +1,322 @@
-const BACKEND_WS = "ws://localhost:8000";
+const API = "http://localhost:8000";
+const WS = "ws://localhost:8000";
 
-// ─── STATE ───────────────────────────────────────────────
-let ws = null;
-let username = "";
-let roomId = "";
-const clientId = Date.now();
-const members = new Set();
+// Fixed rooms — swap these out for API calls once GET /rooms is wired to the DB
+const FIXED_ROOMS = [
+  {
+    id: "general",
+    name: "General",
+    topic: "Chat",
+    description: "Open conversation for everyone.",
+  },
+  {
+    id: "tech",
+    name: "Tech",
+    topic: "Dev",
+    description: "Programming, tools, and everything code.",
+  },
+  {
+    id: "random",
+    name: "Random",
+    topic: "Off-topic",
+    description: "Anything goes. No rules here.",
+  },
+  {
+    id: "ideas",
+    name: "Ideas",
+    topic: "Product",
+    description: "Share what you're building or thinking about.",
+  },
+  {
+    id: "help",
+    name: "Help",
+    topic: "Support",
+    description: "Ask questions, get unstuck.",
+  },
+];
 
-// ─── DOM REFS ─────────────────────────────────────────────
-const lobbyScreen = document.getElementById("lobby");
-const chatScreen = document.getElementById("chat");
-const joinForm = document.getElementById("joinForm");
-const usernameInput = document.getElementById("usernameInput");
-const roomInput = document.getElementById("roomInput");
-const lobbyError = document.getElementById("lobbyError");
+function app() {
+  return {
+    // ── State ──────────────────────────────────────────
+    screen: "auth", // 'auth' | 'rooms' | 'chat'
+    authMode: "login", // 'login' | 'register'
 
-const roomLabel = document.getElementById("roomLabel");
-const userLabel = document.getElementById("userLabel");
-const headerRoom = document.getElementById("headerRoom");
-const memberList = document.getElementById("memberList");
-const messages = document.getElementById("messages");
-const messageForm = document.getElementById("messageForm");
-const messageInput = document.getElementById("messageInput");
-const connStatus = document.getElementById("connectionStatus");
-const leaveBtn = document.getElementById("leaveBtn");
+    loginData: { username: "", password: "" },
+    registerData: { username: "", password: "" },
 
-// ─── LOBBY ───────────────────────────────────────────────
-joinForm.addEventListener("submit", (e) => {
-  e.preventDefault();
-  const u = usernameInput.value.trim();
-  const r = roomInput.value.trim();
+    error: "",
+    isLoading: false,
 
-  if (!u || !r) {
-    lobbyError.classList.remove("hidden");
-    return;
-  }
+    token: null,
+    currentUser: null,
 
-  lobbyError.classList.add("hidden");
-  username = u;
-  roomId = r;
-  enterChat();
-});
+    rooms: FIXED_ROOMS,
+    activeRoom: null,
 
-// ─── CHAT SETUP ──────────────────────────────────────────
-function enterChat() {
-  // Update UI labels
-  roomLabel.textContent = roomId;
-  userLabel.textContent = username;
-  headerRoom.textContent = roomId;
+    ws: null,
+    wsStatus: "disconnected",
+    messages: [],
+    members: new Set(),
+    messageText: "",
 
-  // Switch screens
-  lobbyScreen.classList.remove("active");
-  chatScreen.classList.add("active");
+    // ── Init ───────────────────────────────────────────
+    init() {
+      const token = localStorage.getItem("relay_token");
+      const user = localStorage.getItem("relay_user");
+      if (token && user) {
+        this.token = token;
+        this.currentUser = user;
+        this.screen = "rooms";
+      }
+    },
 
-  // Connect WebSocket
-  connectWS();
+    // ── Auth ───────────────────────────────────────────
+    async login() {
+      if (!this.loginData.username || !this.loginData.password) {
+        this.error = "Please fill in all fields.";
+        return;
+      }
 
-  // Focus input
-  messageInput.focus();
-}
+      this.isLoading = true;
+      this.error = "";
 
-function leaveChat() {
-  if (ws) {
-    ws.close();
-    ws = null;
-  }
-  members.clear();
-  renderMembers();
-  messages.innerHTML = "";
+      try {
+        // OAuth2PasswordRequestForm expects form-encoded data
+        const form = new URLSearchParams();
+        form.append("username", this.loginData.username);
+        form.append("password", this.loginData.password);
 
-  chatScreen.classList.remove("active");
-  lobbyScreen.classList.add("active");
-  usernameInput.value = "";
-  roomInput.value = "";
-}
+        const res = await fetch(`${API}/users/token`, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: form,
+        });
 
-leaveBtn.addEventListener("click", leaveChat);
+        const data = await res.json();
 
-// ─── WEBSOCKET ───────────────────────────────────────────
-function connectWS() {
-  setStatus("connecting");
+        if (!res.ok) {
+          this.error = data.detail ?? "Login failed.";
+          return;
+        }
 
-  ws = new WebSocket(`${BACKEND_WS}/ws/${roomId}/${clientId}`);
+        this.token = data.access_token;
+        this.currentUser = this.loginData.username.toLowerCase();
 
-  ws.onopen = () => {
-    setStatus("connected");
-    addMember(username, true);
+        localStorage.setItem("relay_token", this.token);
+        localStorage.setItem("relay_user", this.currentUser);
 
-    // Announce arrival
-    ws.send(JSON.stringify({ type: "join", username }));
+        this.loginData = { username: "", password: "" };
+        this.screen = "rooms";
+      } catch (e) {
+        this.error = "Could not reach the server.";
+      } finally {
+        this.isLoading = false;
+      }
+    },
+
+    async register() {
+      if (!this.registerData.username || !this.registerData.password) {
+        this.error = "Please fill in all fields.";
+        return;
+      }
+
+      if (this.registerData.password.length < 8) {
+        this.error = "Password must be at least 8 characters.";
+        return;
+      }
+
+      this.isLoading = true;
+      this.error = "";
+
+      try {
+        const res = await fetch(`${API}/users/register`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            username: this.registerData.username,
+            password: this.registerData.password,
+          }),
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          this.error = data.detail ?? "Registration failed.";
+          return;
+        }
+
+        // Auto-login after registration
+        this.loginData = {
+          username: this.registerData.username,
+          password: this.registerData.password,
+        };
+        this.registerData = { username: "", password: "" };
+        this.authMode = "login";
+        await this.login();
+      } catch (e) {
+        this.error = "Could not reach the server.";
+      } finally {
+        this.isLoading = false;
+      }
+    },
+
+    logout() {
+      if (this.ws) this.ws.close();
+      localStorage.removeItem("relay_token");
+      localStorage.removeItem("relay_user");
+      this.token = null;
+      this.currentUser = null;
+      this.activeRoom = null;
+      this.messages = [];
+      this.members = new Set();
+      this.screen = "auth";
+    },
+
+    // ── Rooms ──────────────────────────────────────────
+    joinRoom(room) {
+      this.activeRoom = room;
+      this.messages = [];
+      this.members = new Set();
+      this.screen = "chat";
+      this.$nextTick(() => {
+        this.connectWS();
+        this.$refs.messageInput?.focus();
+      });
+    },
+
+    leaveRoom() {
+      if (this.ws) this.ws.close();
+      this.ws = null;
+      this.activeRoom = null;
+      this.messages = [];
+      this.members = new Set();
+      this.screen = "rooms";
+    },
+
+    // ── WebSocket ──────────────────────────────────────
+    connectWS() {
+      this.wsStatus = "connecting";
+
+      const clientId = Date.now();
+      // Pass token as query param since WS handshake can't send Auth headers
+      this.ws = new WebSocket(
+        `${WS}/ws/${this.activeRoom.id}/${clientId}?token=${this.token}`,
+      );
+
+      this.ws.onopen = () => {
+        this.wsStatus = "connected";
+        // Announce join
+        this.ws.send(
+          JSON.stringify({
+            type: "join",
+            username: this.currentUser,
+          }),
+        );
+      };
+
+      this.ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          this.handleMessage(data, clientId);
+        } catch {
+          /* ignore malformed */
+        }
+      };
+
+      this.ws.onclose = () => {
+        this.wsStatus = "disconnected";
+        this.appendSystem("Disconnected from room.");
+      };
+
+      this.ws.onerror = () => {
+        this.wsStatus = "disconnected";
+        this.appendSystem("Connection error. Is the server running?");
+      };
+    },
+
+    handleMessage(data, clientId) {
+      // Someone left
+      if (data.event === "disconnect") {
+        this.members.delete(data.username);
+        this.members = new Set(this.members); // trigger Alpine reactivity
+        this.appendSystem(`${data.username ?? "Someone"} left the room.`);
+        return;
+      }
+
+      // Someone joined
+      if (data.type === "join") {
+        this.members.add(data.username);
+        this.members = new Set(this.members);
+        this.appendSystem(`${data.username} joined the room.`);
+        return;
+      }
+
+      // Regular message — skip own echo since we render optimistically
+      if (data.client_id === clientId) return;
+
+      this.appendMessage({
+        author: data.username ?? `user_${data.client_id}`,
+        text: data.message,
+        time: data.timestamp,
+        own: false,
+      });
+    },
+
+    // ── Send ───────────────────────────────────────────
+    sendMessage() {
+      const text = this.messageText.trim();
+      if (!text || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+
+      const timestamp = new Date().toISOString();
+
+      this.ws.send(
+        JSON.stringify({
+          type: "message",
+          username: this.currentUser,
+          message: text,
+          room_id: this.activeRoom.id,
+          timestamp,
+        }),
+      );
+
+      // Optimistic render
+      this.appendMessage({
+        author: this.currentUser,
+        text,
+        time: timestamp,
+        own: true,
+      });
+      this.messageText = "";
+    },
+
+    // ── Message helpers ────────────────────────────────
+    appendMessage({ author, text, time, own }) {
+      const t = time
+        ? new Date(time).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        : "";
+      this.messages.push({ author, text, time: t, own, system: false });
+      this.scrollToBottom();
+    },
+
+    appendSystem(text) {
+      this.messages.push({
+        text,
+        system: true,
+        own: false,
+        author: "",
+        time: "",
+      });
+      this.scrollToBottom();
+    },
+
+    scrollToBottom() {
+      this.$nextTick(() => {
+        const el = this.$refs.messages;
+        if (el) el.scrollTop = el.scrollHeight;
+      });
+    },
   };
-
-  ws.onmessage = (event) => {
-    let data;
-    try {
-      data = JSON.parse(event.data);
-    } catch {
-      return;
-    }
-    handleMessage(data);
-  };
-
-  ws.onclose = () => {
-    setStatus("disconnected");
-    appendSystemMessage("Disconnected from room.");
-  };
-
-  ws.onerror = () => {
-    setStatus("disconnected");
-    appendSystemMessage("Connection error. Is the server running?");
-  };
-}
-
-// ─── MESSAGE HANDLING ────────────────────────────────────
-function handleMessage(data) {
-  // System events
-  if (data.event === "disconnect") {
-    removeMember(data.username);
-    appendSystemMessage(`${data.username ?? "Someone"} left the room.`);
-    return;
-  }
-
-  if (data.type === "join") {
-    addMember(data.username);
-    appendSystemMessage(`${data.username} joined the room.`);
-    return;
-  }
-
-  // Regular message — ignore echo of own messages (we optimistically render them)
-  if (data.client_id === clientId) return;
-
-  appendMessage({
-    author: data.username ?? `user_${data.client_id}`,
-    text: data.message,
-    time: data.timestamp,
-    own: false,
-  });
-}
-
-// ─── SEND MESSAGE ────────────────────────────────────────
-messageForm.addEventListener("submit", (e) => {
-  e.preventDefault();
-  const text = messageInput.value.trim();
-  if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
-
-  const payload = {
-    type: "message",
-    username,
-    message: text,
-    client_id: clientId,
-    room_id: roomId,
-    timestamp: new Date().toISOString(),
-  };
-
-  ws.send(JSON.stringify(payload));
-
-  // Optimistic render
-  appendMessage({ author: username, text, time: payload.timestamp, own: true });
-
-  messageInput.value = "";
-});
-
-// ─── RENDER HELPERS ──────────────────────────────────────
-function appendMessage({ author, text, time, own }) {
-  const el = document.createElement("div");
-  el.className = `msg${own ? " own" : ""}`;
-
-  const t = time
-    ? new Date(time).toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      })
-    : "";
-
-  el.innerHTML = `
-    <div class="msg-meta">
-      <span class="msg-author">${escHtml(author)}</span>
-      <span class="msg-time">${t}</span>
-    </div>
-    <div class="msg-divider"></div>
-    <div class="msg-text">${escHtml(text)}</div>
-  `;
-
-  messages.appendChild(el);
-  messages.scrollTop = messages.scrollHeight;
-}
-
-function appendSystemMessage(text) {
-  const el = document.createElement("div");
-  el.className = "msg system";
-  el.innerHTML = `<div class="msg-text">${escHtml(text)}</div>`;
-  messages.appendChild(el);
-  messages.scrollTop = messages.scrollHeight;
-}
-
-// ─── MEMBER LIST ─────────────────────────────────────────
-function addMember(name, isSelf = false) {
-  if (!name || members.has(name)) return;
-  members.add(name);
-  renderMembers(isSelf ? name : null);
-}
-
-function removeMember(name) {
-  members.delete(name);
-  renderMembers();
-}
-
-function renderMembers(selfName) {
-  memberList.innerHTML = "";
-  members.forEach((name) => {
-    const li = document.createElement("li");
-    const isSelf = name === username;
-    if (isSelf) li.classList.add("self");
-    li.textContent = isSelf ? `${name} (you)` : name;
-    memberList.appendChild(li);
-  });
-}
-
-// ─── STATUS ──────────────────────────────────────────────
-function setStatus(state) {
-  connStatus.className = `conn-status ${state}`;
-  connStatus.querySelector(".status-text").textContent = state;
-}
-
-// ─── UTILS ───────────────────────────────────────────────
-function escHtml(str) {
-  return String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }
