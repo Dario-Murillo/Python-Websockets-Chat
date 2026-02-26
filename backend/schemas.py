@@ -11,13 +11,12 @@ class UserCreate(BaseModel):
 
 class UserResponse(UserBase):
 
-    model_config = ConfigDict({"from_attributes": True})  # allows converting SQLAlchemy models directly
+    model_config = ConfigDict(from_attributes=True)     # allows converting SQLAlchemy models directly
 
 class Token(BaseModel):
     access_token: str
     token_type: str
     
-
 class MessageResponse(BaseModel):
     id: int
     text: str

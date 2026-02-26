@@ -44,7 +44,7 @@ async def login_for_access_token(
     db: Annotated[AsyncSession, Depends(get_db)]
 ):
     result = await db.execute(
-        select(models.User).where(models.User.username == form_data.username.lower())
+        select(models.User).where(models.User.username == form_data.username)
     )
     
     user = result.scalars().first()
@@ -102,8 +102,4 @@ async def get_current_user(
     
     return user
     
-    
-# Will invalidate the token
-@router.post("/logout")
-async def logout():
-    pass
+ 
