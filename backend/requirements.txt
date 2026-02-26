@@ -3,6 +3,7 @@ aiofiles
 sqlalchemy[asyncio] 
 asyncpg 
 alembic 
-passlib[bcrypt] 
+pwdlib[argon2]
+pyjwt
+pydantic-settings
 python-jose[cryptography] 
-python-dotenv

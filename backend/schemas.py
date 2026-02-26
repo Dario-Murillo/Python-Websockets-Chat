@@ -1,15 +1,23 @@
 # schemas.py
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, ConfigDict
 
-class UserCreate(BaseModel):
-    username: str
-    password: str
-
-class UserResponse(BaseModel):
+class UserBase(BaseModel):
     id: int
-    username: str
+    username: str = Field(min_length=1, max_length=50)
 
-    model_config = {"from_attributes": True}  # allows converting SQLAlchemy models directly
+class UserCreate(UserBase):
+    password: str = Field(min_length=8)
+
+class UserResponse(UserBase):
+
+    model_config = ConfigDict({"from_attributes": True})  # allows converting SQLAlchemy models directly
+
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+    
+
 
 class MessageResponse(BaseModel):
     id: int
