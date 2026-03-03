@@ -197,10 +197,9 @@ function app() {
     connectWS() {
       this.wsStatus = "connecting";
 
-      const clientId = Date.now();
       // Pass token as query param since WS handshake can't send Auth headers
       this.ws = new WebSocket(
-        `${WS}/ws/${this.activeRoom.id}/${clientId}?token=${this.token}`,
+        `${WS}/ws/${this.activeRoom.id}?token=${this.token}`,
       );
 
       this.ws.onopen = () => {
@@ -217,7 +216,8 @@ function app() {
       this.ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          this.handleMessage(data, clientId);
+
+          this.handleMessage(data);
         } catch {
           /* ignore malformed */
         }
@@ -234,7 +234,7 @@ function app() {
       };
     },
 
-    handleMessage(data, clientId) {
+    handleMessage(data) {
       // Someone left
       if (data.event === "disconnect") {
         this.members.delete(data.username);
@@ -252,7 +252,7 @@ function app() {
       }
 
       // Regular message — skip own echo since we render optimistically
-      if (data.client_id === clientId) return;
+      if (data.username === this.currentUser) return;
 
       this.appendMessage({
         author: data.username ?? `user_${data.client_id}`,

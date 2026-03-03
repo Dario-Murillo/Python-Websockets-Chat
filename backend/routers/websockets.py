@@ -1,5 +1,8 @@
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, status, Depends
 import json
+from auth import get_current_user_ws
+from sqlalchemy.ext.asyncio import AsyncSession
+from database import get_db
 from datetime import datetime, timezone
 
 router = APIRouter(tags=["websocket"])
@@ -30,9 +33,20 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-@router.websocket("/ws/{room_id}/{client_id}")
-async def websocket_endpoint(websocket: WebSocket, room_id: str, client_id: int):
+# Call on front: ${WS}/ws/${this.activeRoom.id}?token=${this.token}
+@router.websocket("/ws/{room_id}")
+async def websocket_endpoint(websocket: WebSocket, room_id: str, token: str = Query(...),  
+                             db: AsyncSession = Depends(get_db)):
+    
+    user = await get_current_user_ws(token, db)
+
+    if user is None:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
+
     await manager.connect(websocket, room_id)
+    username = user.username
+    
     try:
         while True:
             rawData = await websocket.receive_text()
@@ -41,7 +55,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, client_id: int)
             if data.get("type") == "join":
                 await manager.broadcast(json.dumps({
                     "type": "join",
-                    "username": data.get("username"),
+                    "username": username,
                     "room_id": room_id,
                     "timestamp": datetime.now(timezone.utc).isoformat()
                 }), room_id)
@@ -50,8 +64,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, client_id: int)
             await manager.send_personal_message(f"You wrote: {data}", websocket)
             await manager.broadcast(json.dumps({
                 "type": "message",
-                "client_id": client_id,
-                "username": data.get("username"),
+                "username": username,
                 "message": data.get("message"),
                 "room_id": room_id,
                 "timestamp": datetime.now(timezone.utc).isoformat()
@@ -62,7 +75,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, client_id: int)
         manager.disconnect(websocket, room_id)
         await manager.broadcast(json.dumps({
             "event": "disconnect",
-            "username": "unknown",  # temporary until auth is added
+            "username": username,  # temporary until auth is added
             "room_id": room_id,
             "timestamp": datetime.now(timezone.utc).isoformat()
         }), room_id)

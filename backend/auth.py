@@ -81,3 +81,17 @@ async def get_current_user(
         raise unauthorized
 
     return user
+
+async def get_current_user_ws(token: str, db: AsyncSession) -> models.User | None:
+    user_id = verify_access_token(token=token)
+    if user_id is None:
+        return None
+    try:
+        user_id_int = int(user_id)
+    except (TypeError, ValueError):
+        return None
+    result = await db.execute(
+        select(models.User).where(models.User.id == user_id_int)
+    )
+    
+    return result.scalars().first()
