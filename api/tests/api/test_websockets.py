@@ -12,6 +12,7 @@ from app.api.v1.endpoints.websockets import (
     WS_ROOM_NOT_FOUND,
 )
 from app.core.database import engine
+from app.schemas.websocket import MAX_MESSAGE_LENGTH
 
 WS_POLICY_VIOLATION = 1008
 
@@ -236,4 +237,84 @@ async def test_the_server_sends_no_plain_text_echo(ws_client, token):
         frame = json.loads(await ws.receive_text(timeout=2))
 
     assert frame["type"] == "message"
+    assert frame["message"] == "hola"
+
+
+async def next_broadcast(ws) -> dict:
+    """Sends a known-good message and returns the frame it produces.
+
+    Anything the server had wrongly accepted before it would arrive first, so
+    this is how a test asserts that a bad frame produced *nothing*.
+    """
+    await ws.send_text(json.dumps({"type": "message", "message": "canary"}))
+    return json.loads(await ws.receive_text(timeout=2))
+
+
+async def test_an_overlong_message_is_dropped(ws_client, token):
+    async with open_socket(ws_client, "general", token) as ws:
+        await join(ws)
+
+        await ws.send_text(
+            json.dumps({"type": "message", "message": "x" * (MAX_MESSAGE_LENGTH + 1)})
+        )
+        frame = await next_broadcast(ws)
+
+    assert frame["message"] == "canary"
+
+
+async def test_a_message_at_the_limit_is_accepted(ws_client, token):
+    async with open_socket(ws_client, "general", token) as ws:
+        await join(ws)
+
+        await ws.send_text(
+            json.dumps({"type": "message", "message": "x" * MAX_MESSAGE_LENGTH})
+        )
+        frame = json.loads(await ws.receive_text(timeout=2))
+
+    assert len(frame["message"]) == MAX_MESSAGE_LENGTH
+
+
+async def test_an_empty_or_blank_message_is_dropped(ws_client, token):
+    async with open_socket(ws_client, "general", token) as ws:
+        await join(ws)
+
+        await ws.send_text(json.dumps({"type": "message", "message": ""}))
+        await ws.send_text(json.dumps({"type": "message", "message": "   "}))
+        frame = await next_broadcast(ws)
+
+    assert frame["message"] == "canary"
+
+
+async def test_a_message_that_is_not_a_string_is_dropped(ws_client, token):
+    """`data.get("message")` used to hand a number or an object straight to
+    every socket in the room."""
+    async with open_socket(ws_client, "general", token) as ws:
+        await join(ws)
+
+        await ws.send_text(json.dumps({"type": "message", "message": 42}))
+        await ws.send_text(json.dumps({"type": "message", "message": {"a": ["b"]}}))
+        frame = await next_broadcast(ws)
+
+    assert frame["message"] == "canary"
+
+
+async def test_an_unknown_frame_type_is_dropped(ws_client, token):
+    """Anything that was not `join` used to fall through to the message branch."""
+    async with open_socket(ws_client, "general", token) as ws:
+        await join(ws)
+
+        await ws.send_text(json.dumps({"type": "promote", "role": "admin"}))
+        frame = await next_broadcast(ws)
+
+    assert frame["type"] == "message"
+    assert frame["message"] == "canary"
+
+
+async def test_surrounding_whitespace_is_stripped(ws_client, token):
+    async with open_socket(ws_client, "general", token) as ws:
+        await join(ws)
+
+        await ws.send_text(json.dumps({"type": "message", "message": "  hola  "}))
+        frame = json.loads(await ws.receive_text(timeout=2))
+
     assert frame["message"] == "hola"

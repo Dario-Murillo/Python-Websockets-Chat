@@ -1,9 +1,11 @@
 import json
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
+from pydantic import ValidationError
 
 from app.api.deps import get_current_user_ws, ws_session
 from app.crud import crud_room
+from app.schemas.websocket import JoinFrame, client_frame
 from app.services.connection_manager import manager
 from app.utils.time import utcnow
 
@@ -91,18 +93,17 @@ async def websocket_endpoint(websocket: WebSocket, room_slug: str):
             raw_data = await websocket.receive_text()
 
             try:
-                data = json.loads(raw_data)
-            except json.JSONDecodeError:
-                # This used to escape the handler entirely, skipping the cleanup
-                # below and leaving a registered socket nobody was reading.
+                frame = client_frame.validate_json(raw_data)
+            except ValidationError:
+                # Everything the protocol does not define is dropped while the
+                # connection stays open: malformed JSON, valid JSON that is not
+                # an object, an unknown `type`, a message that is empty or over
+                # MAX_MESSAGE_LENGTH. This used to escape the handler entirely,
+                # skipping the cleanup below and leaving a registered socket
+                # nobody was reading.
                 continue
 
-            # Valid JSON is not necessarily an object: `"hello"` parses fine and
-            # has no `.get`.
-            if not isinstance(data, dict):
-                continue
-
-            if data.get("type") == "join":
+            if isinstance(frame, JoinFrame):
                 await manager.broadcast(
                     json.dumps(
                         {
@@ -121,7 +122,7 @@ async def websocket_endpoint(websocket: WebSocket, room_slug: str):
                     {
                         "type": "message",
                         "username": username,
-                        "message": data.get("message"),
+                        "message": frame.message,
                         "room_slug": room_slug,
                         "timestamp": utcnow().isoformat(),
                     }

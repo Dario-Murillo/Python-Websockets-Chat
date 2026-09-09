@@ -23,4 +23,9 @@ EXPOSE 8000
 # Safe as a startup step because this app runs as a single instance anyway --
 # ConnectionManager is in-memory. Running replicas would need a one-shot
 # migration job instead, so that two containers cannot race the same upgrade.
-CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+#
+# `--ws-max-size` caps a frame at 64 KiB, down from uvicorn's 16 MiB default. The
+# schema already rejects an overlong message, but only after the whole frame has
+# been received and parsed; this refuses it at the transport, before it costs
+# anything. A 500-character message is under 2 KB even in multibyte UTF-8.
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --ws-max-size 65536"]
