@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Wordmark } from "@/components/wordmark";
 import { useChatSocket } from "@/hooks/use-chat-socket";
+import { MAX_MESSAGE_LENGTH } from "@/lib/config";
 import type { Room, Session, WsStatus } from "@/lib/types";
 
 type Props = {
@@ -185,7 +186,7 @@ export default function ChatScreen({ session, room, onLeave, onLogout }: Props) 
             onChange={(event) => setText(event.target.value)}
             placeholder={`Message #${room.name}`}
             autoComplete="off"
-            maxLength={500}
+            maxLength={MAX_MESSAGE_LENGTH}
             className="flex-1 rounded-sharp border border-border bg-bg px-3.5 py-2.5 text-[13px] text-text outline-none transition-colors placeholder:text-muted focus:border-accent"
           />
           <button
