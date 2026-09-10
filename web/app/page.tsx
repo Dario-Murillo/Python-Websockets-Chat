@@ -1,17 +1,15 @@
 "use client";
 
-import { useState } from "react";
+import { useRouter } from "next/navigation";
 import AuthScreen from "@/components/auth-screen";
-import ChatScreen from "@/components/chat-screen";
 import RoomsScreen from "@/components/rooms-screen";
 import Splash from "@/components/splash";
 import { useAuth } from "@/hooks/use-auth";
-import type { Room } from "@/lib/types";
 
 export default function Home() {
   const { session, ready, error, isLoading, login, register, logout, clearError } =
     useAuth();
-  const [activeRoom, setActiveRoom] = useState<Room | null>(null);
+  const router = useRouter();
 
   // Hold the first paint until the stored session has been read, so a returning
   // user never sees the auth screen flash before the room list.
@@ -29,30 +27,11 @@ export default function Home() {
     );
   }
 
-  function handleLogout() {
-    // Unmount the chat first so the socket closes cleanly, then revoke.
-    setActiveRoom(null);
-    void logout();
-  }
-
-  if (activeRoom) {
-    return (
-      <ChatScreen
-        // Remount per room so the socket, messages, and roster all reset.
-        key={activeRoom.slug}
-        session={session}
-        room={activeRoom}
-        onLeave={() => setActiveRoom(null)}
-        onLogout={handleLogout}
-      />
-    );
-  }
-
   return (
     <RoomsScreen
       session={session}
-      onJoin={setActiveRoom}
-      onLogout={handleLogout}
+      onJoin={(room) => router.push(`/room/${room.slug}`)}
+      onLogout={() => void logout()}
     />
   );
 }

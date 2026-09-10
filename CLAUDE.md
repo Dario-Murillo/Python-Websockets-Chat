@@ -65,7 +65,8 @@ Amagi/
     ├── app/
     │   ├── layout.tsx            # Fonts (DM Mono, Bebas Neue) and metadata
     │   ├── globals.css           # Tailwind v4 import + @theme design tokens
-    │   └── page.tsx              # Client screen switcher: splash → auth → rooms → chat
+    │   ├── page.tsx              # splash → auth → room list
+    │   └── room/[slug]/page.tsx  # One room's chat, addressable by URL
     ├── components/
     │   ├── splash.tsx            # Painted until the stored session is read
     │   ├── auth-screen.tsx
@@ -223,7 +224,13 @@ messages      → id, text, created_at, user_id (FK), room_id (FK)
 
 **Rooms come from the database** — seeded by migration and served by `GET /rooms`, which requires a session. They are addressed by `slug` everywhere outside the database (`rooms.id` is only what the foreign keys point at), so the WebSocket path, `web/lib/types.ts` and the remount key all carry the slug. The API is deliberately read-only for rooms: users have no permission to create or delete them, so no write endpoints are exposed.
 
-**The frontend is one client-side route.** `app/page.tsx` is a Client Component that switches between splash, auth, rooms, and chat from local state — there is no server-side data fetching, and the session lives in `localStorage`. The one client-side fetch is `useRooms`, which keeps its three outcomes in a single tagged state value so the effect never writes state synchronously — the React Compiler lint rules reject that. `ChatScreen` is rendered with `key={room.id}` so a room change remounts it and resets the socket, messages, and roster; `useChatSocket` relies on that and never clears them itself.
+**Two client-side routes.** `app/page.tsx` switches between splash, auth and the room list; `app/room/[slug]/page.tsx` is one room's chat. Both are Client Components — the session lives in `localStorage`, so no guard can run on the server and the room route redirects to `/` from an effect once `ready` is true. The only client-side fetch is `useRooms`, which keeps its three outcomes in a single tagged state value so the effect never writes state synchronously (the React Compiler lint rules reject that); the room route reuses it and picks its room out of the list rather than calling `GET /rooms/{slug}`.
+
+**A dynamic page is reused when only its param changes** — `/room/general` → `/room/tech` does *not* remount it (that is what `template.tsx` is for). `useChatSocket` accumulates messages and members and never clears them, so the remount has to be forced explicitly: `ChatScreen` is rendered with `key={slug}`. Removing that key silently carries the previous room's messages into the next one.
+
+**An unknown slug never opens a socket.** The room route resolves the slug against the fetched list and renders a notice instead of the chat when it matches nothing — showing a working-looking chat UI for a room that does not exist reads as a bug. A failed room fetch is a separate notice: "the API is down" and "no such room" are different problems and saying the wrong one sends the user hunting in the wrong place. `notFound()` is not an option here, it is documented for Server Components, Server Functions and Route Handlers only, and this check is necessarily client-side.
+
+The server's `4004` close code still exists and is still the authority — it covers any client that skips the list, and the browser now just rarely reaches it.
 
 ## Tailwind Conventions
 
